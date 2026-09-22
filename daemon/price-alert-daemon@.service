@@ -1,0 +1,27 @@
+[Unit]
+Description=Price Alert Daemon — System notifications for price levels
+Documentation=https://github.com/price-alert-daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/node /opt/price-alert-daemon/dist/index.js run
+ExecStop=/bin/kill -SIGTERM $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/price-alert-daemon.log
+StandardError=append:/var/log/price-alert-daemon.log
+Environment=NODE_ENV=production
+Environment=PRICE_ALERT_CONFIG=/home/%i/.price-alert-daemon/config.json
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/.price-alert-daemon /tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
