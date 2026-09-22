@@ -143,7 +143,7 @@ echo "╠═══════════════════════�
 echo "║                                                          ║"
 echo "║  Quick start:                                            ║"
 echo "║    price-alert start          # Start daemon             ║"
-echo "║    price-alert add ES=F 5800  # Add alert                ║"
+echo "║    price-alert add CME_MINI:ES1! 5800  # Add alert      ║"
 echo "║    price-alert list           # View alerts              ║"
 echo "║    price-alert status         # Check status             ║"
 echo "║    price-alert test           # Test notification        ║"

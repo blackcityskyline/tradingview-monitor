@@ -12,63 +12,83 @@ Linux daemon для неограниченных уведомлений по ц�
 - 🌐 **Web UI** для мониторинга и управления
 - 💾 **Сохранение** конфигурации в JSON
 - ⚙️ **systemd** интеграция для автозапуска
+- ⚡ **Real-time** данные через TradingView WebSocket
+
+## 📊 Источник данных
+
+Демон использует **TradingView WebSocket API** для получения цен в реальном времени.
+
+### TradingView WebSocket
+- **Endpoint**: `wss://data.tradingview.com/socket.io/websocket`
+- **Авторизация**: Не требуется (публичный доступ)
+- **Стоимость**: Бесплатно
+- **Задержка**: Реальное время (< 1 сек для всех рынков)
+- **Покрытие**: Все рынки — FOREX, фьючерсы, металлы, крипто, акции
+
+### ✅ Преимущества
+
+- **Реальное время** для всех инструментов (включая фьючерсы CME, NYMEX, COMEX)
+- **Все рынки** в одном источнике
+- **Бесплатно** без API ключей
+- **Стабильность** — WebSocket соединение с автоматическим переподключением
+- **Точность** — те же данные что на TradingView.com
 
 ## Поддерживаемые символы
 
 ### FOREX Majors
 | Символ | Описание |
 |--------|----------|
-| EURUSD=X | EUR/USD |
-| GBPUSD=X | GBP/USD |
-| USDJPY=X | USD/JPY |
-| USDCHF=X | USD/CHF |
-| AUDUSD=X | AUD/USD |
-| USDCAD=X | USD/CAD |
-| NZDUSD=X | NZD/USD |
+| FX:EURUSD | EUR/USD |
+| FX:GBPUSD | GBP/USD |
+| FX:USDJPY | USD/JPY |
+| FX:USDCHF | USD/CHF |
+| FX:AUDUSD | AUD/USD |
+| FX:USDCAD | USD/CAD |
+| FX:NZDUSD | NZD/USD |
 
 ### Futures — Indices
 | Символ | Описание |
 |--------|----------|
-| ES=F | S&P 500 E-mini |
-| NQ=F | Nasdaq 100 E-mini |
-| YM=F | Dow E-mini |
-| RTY=F | Russell 2000 |
-| VX=F | VIX (Volatility) |
+| CME_MINI:ES1! | S&P 500 E-mini |
+| CME_MINI:NQ1! | Nasdaq 100 E-mini |
+| CBT:YM1! | Dow E-mini |
+| CME_MINI:RTY1! | Russell 2000 |
+| CBOE:VIX | VIX (Volatility) |
 
 ### Futures — Energy
 | Символ | Описание |
 |--------|----------|
-| CL=F | WTI Crude Oil |
-| BZ=F | Brent Crude Oil |
-| NG=F | Natural Gas |
-| HO=F | Heating Oil |
-| RB=F | RBOB Gasoline |
+| NYMEX:CL1! | WTI Crude Oil |
+| NYMEX:BZ1! | Brent Crude Oil |
+| NYMEX:NG1! | Natural Gas |
+| NYMEX:HO1! | Heating Oil |
+| NYMEX:RB1! | RBOB Gasoline |
 
 ### Futures — Metals
 | Символ | Описание |
 |--------|----------|
-| GC=F | Gold |
-| SI=F | Silver |
-| PL=F | Platinum |
-| PA=F | Palladium |
-| HG=F | Copper |
+| COMEX:GC1! | Gold |
+| COMEX:SI1! | Silver |
+| NYMEX:PL1! | Platinum |
+| NYMEX:PA1! | Palladium |
+| COMEX:HG1! | Copper |
 
 ### Futures — Agriculture
 | Символ | Описание |
 |--------|----------|
-| ZC=F | Corn |
-| ZS=F | Soybeans |
-| ZW=F | Wheat |
-| KC=F | Coffee |
-| CT=F | Cotton |
-| SB=F | Sugar |
+| CBT:ZC1! | Corn |
+| CBT:ZS1! | Soybeans |
+| CBT:ZW1! | Wheat |
+| ICEUS:KC1! | Coffee |
+| ICEUS:CT1! | Cotton |
+| ICEUS:SB1! | Sugar |
 
 ### Crypto
 | Символ | Описание |
 |--------|----------|
-| BTC-USD | Bitcoin |
-| ETH-USD | Ethereum |
-| SOL-USD | Solana |
+| BINANCE:BTCUSDT | Bitcoin |
+| BINANCE:ETHUSDT | Ethereum |
+| BINANCE:SOLUSDT | Solana |
 
 ## Установка
 
@@ -118,11 +138,11 @@ price-alert logs               # Логи
 
 ```bash
 # Добавить алерт
-price-alert add "ES=F" 5800 above           # S&P выше 5800
-price-alert add "GC=F" 2400 below           # Золото ниже 2400
-price-alert add "EURUSD=X" 1.10 above       # EUR/USD выше 1.10
-price-alert add "CL=F" 75 below 300         # Нефть ниже 75, повтор каждые 300с
-price-alert add "NQ=F" 20000 above 60       # Nasdaq выше 20000, повтор 60с
+price-alert add "CME_MINI:ES1!" 5800 above           # S&P выше 5800
+price-alert add "COMEX:GC1!" 2400 below              # Золото ниже 2400
+price-alert add "FX:EURUSD" 1.10 above               # EUR/USD выше 1.10
+price-alert add "NYMEX:CL1!" 75 below 300            # Нефть ниже 75, повтор каждые 300с
+price-alert add "CME_MINI:NQ1!" 20000 above 60       # Nasdaq выше 20000, повтор 60с
 
 # Список
 price-alert list
@@ -169,7 +189,7 @@ systemctl --user status price-alert-daemon
 После запуска демона откройте: http://localhost:3456
 
 Web UI позволяет:
-- Просматривать текущие цены
+- Просматривать текущие цены в реальном времени
 - Добавлять/удалять алерты
 - Мониторить статус демона
 - Управлять настройками
@@ -200,7 +220,7 @@ Web UI позволяет:
   "alerts": [
     {
       "id": "abc123",
-      "symbol": "ES=F",
+      "symbol": "CME_MINI:ES1!",
       "displayName": "S&P 500 E-mini (ES)",
       "targetPrice": 5800,
       "condition": "above",
@@ -216,90 +236,6 @@ Web UI позволяет:
 }
 ```
 
-## Откуда берутся цены?
-
-### Источники данных
-
-Демон использует **несколько источников данных** с автоматическим fallback:
-
-#### 1. Yahoo Finance (основной)
-- **Endpoint**: `query1.finance.yahoo.com/v7/finance/quote` и `/v8/finance/chart`
-- **Авторизация**: Не требуется
-- **Стоимость**: Бесплатно
-- **Задержка**: 
-  - FOREX, крипто: ~реальное время
-  - US фьючерсы (ES, NQ, CL, GC): задержка 10-15 минут (требование биржи)
-  - Азиатские/европейские рынки: может быть задержка
-- **Лимиты**: ~2000 запросов/час (без авторизации)
-- **Покрытие**: Все символы из каталога
-
-#### 2. Twelve Data (fallback)
-- **Endpoint**: `api.twelvedata.com/price`
-- **Авторизация**: API ключ (бесплатный)
-- **Стоимость**: 800 запросов/день бесплатно
-- **Задержка**: ~реальное время
-- **Настройка**: `export TWELVE_DATA_API_KEY=your_key`
-- **Получить ключ**: https://twelvedata.com/pricing
-
-#### 3. Binance WebSocket (для крипто)
-- **Endpoint**: `wss://stream.binance.com:9443/ws`
-- **Авторизация**: Не требуется
-- **Стоимость**: Бесплатно
-- **Задержка**: Реальное время (< 1 сек)
-- **Покрытие**: Только крипто (BTC, ETH, SOL, etc.)
-
-### Важные замечания
-
-⚠️ **Задержка данных для фьючерсов**
-
-Цены фьючерсов CME/CBOT/NYMEX (ES, NQ, CL, GC, ZS, etc.) через Yahoo Finance имеют **задержку 10-15 минут** — это требование бирж. Для real-time данных фьючерсов нужна платная подписка:
-- CME Market Data: ~$10-30/месяц
-- Или через брокера (Interactive Brokers, TD Ameritrade)
-
-✅ **FOREX и крипто** — данные практически в реальном времени (задержка < 1 сек)
-
-✅ **Металлы (spot)** — XAU/USD, XAG/USD доступны с минимальной задержкой
-
-### Проверка источников
-
-```bash
-# Показать статус всех провайдеров
-curl http://localhost:3456/api/providers
-
-# Пример ответа:
-{
-  "providers": [
-    {
-      "name": "Yahoo Finance",
-      "available": true,
-      "note": "Free, no auth. May be rate-limited."
-    },
-    {
-      "name": "Twelve Data",
-      "available": false,
-      "note": "Not configured. Set TWELVE_DATA_API_KEY."
-    }
-  ]
-}
-```
-
-### Альтернативные источники (если Yahoo не работает)
-
-Если Yahoo Finance заблокирован в вашем регионе или возвращает ошибки:
-
-1. **Twelve Data** (рекомендуется)
-   ```bash
-   export TWELVE_DATA_API_KEY=your_key
-   price-alert restart
-   ```
-
-2. **Finnhub** (60 calls/min бесплатно)
-   ```bash
-   export FINNHUB_API_KEY=your_key
-   ```
-
-3. **Свой прокси** — можно настроить проксирование через VPN/VPS
-
 ## Архитектура
 
 ```
@@ -308,7 +244,7 @@ daemon/
 │   ├── index.ts       — CLI entry point
 │   ├── daemon.ts      — Основной процесс (polling + alerts)
 │   ├── server.ts      — HTTP API + Web UI serving
-│   ├── provider.ts    — Yahoo Finance price data
+│   ├── provider.ts    — TradingView WebSocket client
 │   ├── notifier.ts    — Linux system notifications (DBus)
 │   ├── config.ts      — Config management
 │   ├── symbols.ts     — Symbol catalog

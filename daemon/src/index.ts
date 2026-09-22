@@ -232,10 +232,10 @@ async function addAlert(): Promise<void> {
     console.log('Usage: price-alert add <symbol> <target_price> [above|below] [repeat_seconds]');
     console.log('');
     console.log('Examples:');
-    console.log('  price-alert add "ES=F" 5800 above');
-    console.log('  price-alert add "GC=F" 2400 below');
-    console.log('  price-alert add "EURUSD=X" 1.10 above 300');
-    console.log('  price-alert add "CL=F" 75 below 60');
+    console.log('  price-alert add "CME_MINI:ES1!" 5800 above');
+    console.log('  price-alert add "COMEX:GC1!" 2400 below');
+    console.log('  price-alert add "FX:EURUSD" 1.10 above 300');
+    console.log('  price-alert add "NYMEX:CL1!" 75 below 60');
     console.log('');
     console.log('Available symbols:');
     console.log('  price-alert symbols          — list all');
@@ -474,10 +474,10 @@ OTHER:
 
 EXAMPLES:
   price-alert start
-  price-alert add "ES=F" 5800 above
-  price-alert add "GC=F" 2400 below 300
-  price-alert add "EURUSD=X" 1.10 above
-  price-alert add "CL=F" 75 below 60
+  price-alert add "CME_MINI:ES1!" 5800 above
+  price-alert add "COMEX:GC1!" 2400 below 300
+  price-alert add "FX:EURUSD" 1.10 above
+  price-alert add "NYMEX:CL1!" 75 below 60
   price-alert list
   price-alert symbols oil
   price-alert test

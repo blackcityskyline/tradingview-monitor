@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigManager } from './config';
-import { fetchPrices } from './provider';
+import { fetchPrices, disconnect as disconnectProvider } from './provider';
 import { sendNotification, playAlertSound } from './notifier';
 import { createServer } from './server';
 import { PriceData, PriceAlert } from './types';
@@ -171,6 +171,9 @@ export class PriceAlertDaemon {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+
+    // Disconnect TradingView WebSocket
+    disconnectProvider();
 
     // Remove PID file
     const pidFile = this.config.get().pidFile;

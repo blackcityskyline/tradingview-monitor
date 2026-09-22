@@ -1,262 +1,307 @@
-import * as https from 'https';
-import * as http from 'http';
+import WebSocket from 'ws';
 import { PriceData } from './types';
 
 /**
- * Multi-provider price data system
+ * TradingView WebSocket Provider
  * 
- * Providers (in priority order):
- * 1. Binance WebSocket — Crypto (free, real-time, no auth)
- * 2. Yahoo Finance — Everything else (free, delayed 15min for some markets)
- * 3. Twelve Data — Fallback (free tier: 800 req/day, needs API key)
- * 4. Finnhub — Fallback (free tier: 60 calls/min, needs API key)
+ * Получает цены в реальном времени через официальный WebSocket API TradingView
+ * Endpoint: wss://data.tradingview.com/socket.io/websocket
  * 
- * Yahoo Finance endpoints tried:
- * - v8/finance/spark (fast, batch)
- * - v7/finance/quote (reliable, batch)
- * - v8/finance/chart/{symbol} (single, most reliable)
+ * Поддерживает все рынки:
+ * - FOREX (FX:EURUSD, FX:GBPUSD, etc.)
+ * - Futures (CME_MINI:ES1!, NYMEX:CL1!, COMEX:GC1!, etc.)
+ * - Metals (FX:XAUUSD, FX:XAGUSD, etc.)
+ * - Crypto (BINANCE:BTCUSDT, etc.)
+ * - Stocks (NASDAQ:AAPL, NYSE:MSFT, etc.)
  */
 
 // ─── Types ─────────────────────────────────────────────────────
 
-interface YahooChartResult {
-  meta?: {
-    regularMarketPrice?: number;
-    chartPreviousClose?: number;
-    previousClose?: number;
-    regularMarketDayHigh?: number;
-    regularMarketDayLow?: number;
-    marketState?: string;
-    currency?: string;
-    symbol?: string;
+interface TradingViewQuote {
+  n: string;              // Symbol name
+  v: {
+    lp?: number;          // Last price
+    ch?: number;          // Change
+    chp?: number;         // Change percent
+    open_price?: number;  // Open
+    high_price?: number;  // High
+    low_price?: number;   // Low
+    prev_close_price?: number; // Previous close
+    volume?: number;      // Volume
+    short_name?: string;  // Short name
+    description?: string; // Description
+    exchange?: string;    // Exchange
+    currency_code?: string; // Currency
   };
 }
 
-interface YahooQuoteResult {
-  symbol: string;
-  regularMarketPrice: number;
-  regularMarketPreviousClose: number;
-  regularMarketDayHigh: number;
-  regularMarketDayLow: number;
-  regularMarketChange: number;
-  regularMarketChangePercent: number;
-  marketState: string;
-}
+// ─── TradingView WebSocket Client ──────────────────────────────
 
-// ─── HTTP helpers ──────────────────────────────────────────────
+class TradingViewWebSocket {
+  private ws: WebSocket | null = null;
+  private connected: boolean = false;
+  private sessionId: string = 'qs_stable';
+  private messageCounter: number = 0;
+  private subscribedSymbols: Set<string> = new Set();
+  private priceCallbacks: Map<string, (data: PriceData) => void> = new Map();
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
 
-function fetchUrl(url: string, headers?: Record<string, string>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
-    const mod = parsedUrl.protocol === 'https:' ? https : http;
-    
-    const req = mod.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
-        'Accept': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.5',
-        ...headers,
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', (chunk: Buffer) => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
-        } else if (res.statusCode === 301 || res.statusCode === 302) {
-          // Follow redirect
-          const location = res.headers.location;
-          if (location) {
-            fetchUrl(location, headers).then(resolve).catch(reject);
-          } else {
-            reject(new Error(`Redirect without location: ${res.statusCode}`));
-          }
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}: ${data.substring(0, 200)}`));
+  constructor() {}
+
+  async connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      console.log('Connecting to TradingView WebSocket...');
+      
+      this.ws = new WebSocket('wss://data.tradingview.com/socket.io/websocket', {
+        origin: 'https://www.tradingview.com',
+      });
+
+      this.ws.on('open', () => {
+        console.log('✅ TradingView WebSocket connected');
+        this.connected = true;
+        
+        // Send authentication (public access)
+        this.sendMessage('set_auth_token', ['unauthorized_user']);
+        this.sendMessage('quote_create_session', [this.sessionId]);
+        this.sendMessage('quote_set_fields', [
+          this.sessionId,
+          'ch', 'chp', 'current_volume', 'lang', 'local_description',
+          'market', 'minmov', 'minmove2', 'original_name', 'pricescale',
+          'pro_name', 'short_name', 'type', 'update_mode', 'volume',
+          'currency_code', 'rch', 'rchp', 'rch', 'chp', 'fractional',
+          'is_tradable', 'lp_time', 'lp', 'open_price', 'high_price',
+          'low_price', 'prev_close_price', 'change', 'change_abs',
+          'description', 'name', 'exchange', 'symbol'
+        ]);
+
+        // Start heartbeat
+        this.startHeartbeat();
+        
+        resolve();
+      });
+
+      this.ws.on('message', (data: WebSocket.Data) => {
+        this.handleMessage(data.toString());
+      });
+
+      this.ws.on('error', (error) => {
+        console.error('TradingView WebSocket error:', error.message);
+        if (!this.connected) {
+          reject(error);
         }
       });
-    });
-    
-    req.on('error', reject);
-    req.setTimeout(15000, () => {
-      req.destroy();
-      reject(new Error('Request timeout'));
-    });
-  });
-}
 
-// ─── Yahoo Finance Provider ────────────────────────────────────
+      this.ws.on('close', () => {
+        console.log('TradingView WebSocket closed');
+        this.connected = false;
+        this.stopHeartbeat();
+        this.scheduleReconnect();
+      });
 
-/**
- * Fetch prices from Yahoo Finance using multiple endpoint strategies
- */
-async function fetchFromYahoo(symbols: string[]): Promise<Record<string, PriceData>> {
-  const results: Record<string, PriceData> = {};
-  
-  // Strategy 1: v7/finance/quote (batch, most reliable for multiple symbols)
-  try {
-    const encoded = symbols.map(s => encodeURIComponent(s)).join(',');
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encoded}`;
-    const data = await fetchUrl(url);
-    const parsed = JSON.parse(data);
-    
-    if (parsed.quoteResponse?.result) {
-      for (const q of parsed.quoteResponse.result as YahooQuoteResult[]) {
-        if (q.regularMarketPrice) {
-          results[q.symbol] = {
-            symbol: q.symbol,
-            price: q.regularMarketPrice,
-            prevClose: q.regularMarketPreviousClose || q.regularMarketPrice,
-            change: q.regularMarketChange || 0,
-            changePercent: q.regularMarketChangePercent || 0,
-            high: q.regularMarketDayHigh || q.regularMarketPrice,
-            low: q.regularMarketDayLow || q.regularMarketPrice,
-            marketState: q.marketState || 'REGULAR',
-            lastUpdate: Date.now(),
-          };
+      // Timeout for connection
+      setTimeout(() => {
+        if (!this.connected) {
+          reject(new Error('Connection timeout'));
         }
-      }
-      
-      // If we got all symbols, return
-      if (Object.keys(results).length === symbols.length) {
-        return results;
-      }
-    }
-  } catch (e) {
-    // Strategy 1 failed, try strategy 2
+      }, 10000);
+    });
   }
 
-  // Strategy 2: v8/finance/chart/{symbol} (individual, most reliable)
-  const remaining = symbols.filter(s => !results[s]);
-  
-  for (const symbol of remaining) {
-    try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
-      const data = await fetchUrl(url);
-      const parsed = JSON.parse(data);
-      
-      const chart = parsed.chart?.result?.[0] as YahooChartResult | undefined;
-      if (chart?.meta?.regularMarketPrice) {
-        const meta = chart.meta;
-        const price = meta.regularMarketPrice;
-        const prevClose = meta.chartPreviousClose || meta.previousClose || price;
-        
-        results[symbol] = {
-          symbol,
-          price,
-          prevClose,
-          change: price - prevClose,
-          changePercent: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
-          high: meta.regularMarketDayHigh || price,
-          low: meta.regularMarketDayLow || price,
-          marketState: meta.marketState || 'REGULAR',
-          lastUpdate: Date.now(),
-        };
-      }
-    } catch (e) {
-      console.error(`Yahoo chart fetch failed for ${symbol}:`, (e as Error).message);
-    }
+  private sendMessage(method: string, params: any[]): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     
-    // Small delay between requests to avoid rate limiting
-    if (remaining.length > 1) {
-      await new Promise(r => setTimeout(r, 200));
-    }
+    this.messageCounter++;
+    const message = `~m~${this.messageCounter}~m~${JSON.stringify({ m: method, p: params })}`;
+    this.ws.send(message);
   }
 
-  return results;
-}
-
-// ─── Twelve Data Provider (fallback, needs API key) ────────────
-
-async function fetchFromTwelveData(symbols: string[], apiKey: string): Promise<Record<string, PriceData>> {
-  const results: Record<string, PriceData> = {};
-  
-  // Map Yahoo symbols to Twelve Data symbols
-  const symbolMap: Record<string, string> = {};
-  for (const sym of symbols) {
-    // EURUSD=X -> EUR/USD, GC=F -> XAU/USD, etc.
-    if (sym.endsWith('=X')) {
-      // Forex: EURUSD=X -> EUR/USD
-      const base = sym.replace('=X', '');
-      symbolMap[sym] = `${base.substring(0, 3)}/${base.substring(3)}`;
-    } else if (sym === 'GC=F') {
-      symbolMap[sym] = 'XAU/USD';
-    } else if (sym === 'SI=F') {
-      symbolMap[sym] = 'XAG/USD';
-    } else if (sym === 'CL=F') {
-      symbolMap[sym] = 'WTI';
-    } else {
-      symbolMap[sym] = sym.replace('=F', '').replace('-USD', '/USD');
-    }
-  }
-
-  for (const [yahooSym, tdSym] of Object.entries(symbolMap)) {
-    try {
-      const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(tdSym)}&apikey=${apiKey}`;
-      const data = await fetchUrl(url);
-      const parsed = JSON.parse(data);
-      
-      if (parsed.price) {
-        const price = parseFloat(parsed.price);
-        results[yahooSym] = {
-          symbol: yahooSym,
-          price,
-          prevClose: price, // We don't have prev close from this endpoint
-          change: 0,
-          changePercent: 0,
-          high: price,
-          low: price,
-          marketState: 'REGULAR',
-          lastUpdate: Date.now(),
-        };
+  private handleMessage(data: string): void {
+    // TradingView uses ~m~ separator
+    const messages = data.split('~m~');
+    
+    for (let i = 1; i < messages.length; i += 2) {
+      try {
+        const json = JSON.parse(messages[i]);
+        
+        // Handle quote updates
+        if (json.m === 'qsd') {
+          const quote = json.p[1] as TradingViewQuote;
+          this.processQuote(quote);
+        }
+        
+        // Handle heartbeat responses
+        if (json.m === 'heartbeat') {
+          // Respond to heartbeat
+          this.sendMessage('heartbeat', ['qs_stable']);
+        }
+      } catch (e) {
+        // Ignore parse errors
       }
-    } catch (e) {
-      // Skip failed symbols
     }
   }
 
-  return results;
+  private processQuote(quote: TradingViewQuote): void {
+    const symbol = quote.n;
+    const v = quote.v;
+    
+    if (!v.lp) return; // No price data
+    
+    const priceData: PriceData = {
+      symbol,
+      price: v.lp,
+      prevClose: v.prev_close_price || v.lp,
+      change: v.ch || 0,
+      changePercent: v.chp || 0,
+      high: v.high_price || v.lp,
+      low: v.low_price || v.lp,
+      marketState: 'REGULAR', // TradingView doesn't provide market state
+      lastUpdate: Date.now(),
+    };
+
+    // Call registered callback
+    const callback = this.priceCallbacks.get(symbol);
+    if (callback) {
+      callback(priceData);
+    }
+  }
+
+  subscribe(symbol: string, callback: (data: PriceData) => void): void {
+    if (!this.connected) {
+      console.warn('Cannot subscribe: not connected');
+      return;
+    }
+
+    // Register callback
+    this.priceCallbacks.set(symbol, callback);
+
+    // Subscribe if not already subscribed
+    if (!this.subscribedSymbols.has(symbol)) {
+      this.sendMessage('quote_add_symbols', [this.sessionId, symbol]);
+      this.subscribedSymbols.add(symbol);
+      console.log(`📡 Subscribed to ${symbol}`);
+    }
+  }
+
+  unsubscribe(symbol: string): void {
+    if (!this.connected) return;
+
+    if (this.subscribedSymbols.has(symbol)) {
+      this.sendMessage('quote_remove_symbols', [this.sessionId, symbol]);
+      this.subscribedSymbols.delete(symbol);
+      this.priceCallbacks.delete(symbol);
+      console.log(`📡 Unsubscribed from ${symbol}`);
+    }
+  }
+
+  private startHeartbeat(): void {
+    this.heartbeatTimer = setInterval(() => {
+      if (this.connected) {
+        this.sendMessage('heartbeat', [this.sessionId]);
+      }
+    }, 30000); // Every 30 seconds
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    
+    console.log('Reconnecting in 5 seconds...');
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      try {
+        await this.connect();
+        
+        // Re-subscribe to all symbols
+        const symbols = Array.from(this.subscribedSymbols);
+        this.subscribedSymbols.clear();
+        for (const symbol of symbols) {
+          this.sendMessage('quote_add_symbols', [this.sessionId, symbol]);
+          this.subscribedSymbols.add(symbol);
+        }
+      } catch (e) {
+        console.error('Reconnect failed:', e);
+        this.scheduleReconnect();
+      }
+    }, 5000);
+  }
+
+  disconnect(): void {
+    this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.connected = false;
+    this.subscribedSymbols.clear();
+    this.priceCallbacks.clear();
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
 }
 
-// ─── Main fetch function ───────────────────────────────────────
+// ─── Singleton instance ────────────────────────────────────────
+
+let wsInstance: TradingViewWebSocket | null = null;
+
+async function getWebSocket(): Promise<TradingViewWebSocket> {
+  if (!wsInstance || !wsInstance.isConnected()) {
+    wsInstance = new TradingViewWebSocket();
+    await wsInstance.connect();
+  }
+  return wsInstance;
+}
+
+// ─── Public API ────────────────────────────────────────────────
 
 /**
- * Fetch prices using the best available provider
- * Falls back through providers if one fails
+ * Fetch prices from TradingView WebSocket
+ * Subscribes to symbols and waits for initial quotes
  */
 export async function fetchPrices(symbols: string[]): Promise<Record<string, PriceData>> {
   if (symbols.length === 0) return {};
 
-  let results: Record<string, PriceData> = {};
+  const results: Record<string, PriceData> = {};
+  const ws = await getWebSocket();
+  
+  return new Promise((resolve) => {
+    let receivedCount = 0;
+    const timeout = setTimeout(() => {
+      // Resolve with whatever we got after 10 seconds
+      resolve(results);
+    }, 10000);
 
-  // Try Yahoo Finance first (free, no auth needed)
-  try {
-    results = await fetchFromYahoo(symbols);
-    if (Object.keys(results).length > 0) {
-      return results;
+    for (const symbol of symbols) {
+      ws.subscribe(symbol, (data) => {
+        results[symbol] = data;
+        receivedCount++;
+        
+        // Resolve when we got all symbols
+        if (receivedCount >= symbols.length) {
+          clearTimeout(timeout);
+          resolve(results);
+        }
+      });
     }
-  } catch (e) {
-    console.error('Yahoo Finance failed:', (e as Error).message);
-  }
 
-  // Fallback: Twelve Data (if API key configured)
-  const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
-  if (twelveDataKey) {
-    try {
-      const tdResults = await fetchFromTwelveData(symbols, twelveDataKey);
-      results = { ...results, ...tdResults };
-    } catch (e) {
-      console.error('Twelve Data failed:', (e as Error).message);
+    // If no symbols to subscribe, resolve immediately
+    if (symbols.length === 0) {
+      clearTimeout(timeout);
+      resolve(results);
     }
-  }
-
-  // Log missing symbols
-  const missing = symbols.filter(s => !results[s]);
-  if (missing.length > 0) {
-    console.warn(`Could not fetch prices for: ${missing.join(', ')}`);
-  }
-
-  return results;
+  });
 }
 
 /**
@@ -268,26 +313,44 @@ export async function fetchSinglePrice(symbol: string): Promise<PriceData | null
 }
 
 /**
- * Get provider status info
+ * Subscribe to real-time price updates
+ */
+export async function subscribeToPrice(
+  symbol: string,
+  callback: (data: PriceData) => void
+): Promise<void> {
+  const ws = await getWebSocket();
+  ws.subscribe(symbol, callback);
+}
+
+/**
+ * Unsubscribe from price updates
+ */
+export async function unsubscribeFromPrice(symbol: string): Promise<void> {
+  if (wsInstance) {
+    wsInstance.unsubscribe(symbol);
+  }
+}
+
+/**
+ * Get provider status
  */
 export function getProviderInfo(): { name: string; available: boolean; note: string }[] {
   return [
     {
-      name: 'Yahoo Finance',
-      available: true,
-      note: 'Free, no auth. May be rate-limited. Delayed 15min for some US markets.',
-    },
-    {
-      name: 'Twelve Data',
-      available: !!process.env.TWELVE_DATA_API_KEY,
-      note: process.env.TWELVE_DATA_API_KEY
-        ? 'Configured via TWELVE_DATA_API_KEY. 800 req/day free.'
-        : 'Not configured. Set TWELVE_DATA_API_KEY env var for fallback.',
-    },
-    {
-      name: 'Binance WebSocket',
-      available: true,
-      note: 'Crypto only. Real-time, free, no auth. Used separately via WebSocket.',
+      name: 'TradingView WebSocket',
+      available: wsInstance?.isConnected() || false,
+      note: 'Real-time data from TradingView. All markets covered.',
     },
   ];
+}
+
+/**
+ * Disconnect WebSocket (for graceful shutdown)
+ */
+export function disconnect(): void {
+  if (wsInstance) {
+    wsInstance.disconnect();
+    wsInstance = null;
+  }
 }
