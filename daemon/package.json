@@ -1,0 +1,38 @@
+{
+  "name": "price-alert-daemon",
+  "version": "1.0.0",
+  "description": "Linux daemon for unlimited price alerts with system notifications and TradingView integration",
+  "main": "dist/index.js",
+  "bin": {
+    "price-alert": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js start",
+    "stop": "node dist/index.js stop",
+    "dev": "ts-node src/index.ts",
+    "test-notify": "ts-node src/index.ts test"
+  },
+  "keywords": [
+    "trading",
+    "alerts",
+    "price",
+    "notifications",
+    "linux",
+    "daemon",
+    "forex",
+    "futures",
+    "commodities",
+    "metals"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

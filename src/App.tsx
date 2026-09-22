@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+
+// ─── Types ─────────────────────────────────────────────────────
 
 interface PriceAlert {
   id: string;
@@ -6,62 +8,61 @@ interface PriceAlert {
   displayName: string;
   targetPrice: number;
   condition: 'above' | 'below';
+  enabled: boolean;
   triggered: boolean;
+  repeatEvery: number;
   createdAt: number;
   triggeredAt?: number;
-  enabled: boolean;
   lastNotifiedPrice?: number;
-  repeatEvery?: number; // seconds, 0 = one-time
+  category: string;
 }
 
 interface PriceData {
   symbol: string;
   price: number;
-  prevPrice?: number;
-  change24h: number;
-  changePercent24h: number;
-  high24h: number;
-  low24h: number;
+  prevClose: number;
+  change: number;
+  changePercent: number;
+  high: number;
+  low: number;
+  marketState: string;
   lastUpdate: number;
 }
 
-// Binance WebSocket for crypto
-const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws';
+interface DaemonStatus {
+  running: boolean;
+  uptime: number;
+  pid: number;
+  alertsCount: number;
+  activeAlerts: number;
+  triggeredAlerts: number;
+  symbolsTracked: number;
+  lastPoll: number;
+  version: string;
+}
 
-// Crypto symbols mapping (TradingView format -> Binance format)
-const CRYPTO_MAP: Record<string, string> = {
-  'BINANCE:BTCUSDT': 'btcusdt',
-  'BINANCE:ETHUSDT': 'ethusdt',
-  'BINANCE:BNBUSDT': 'bnbusdt',
-  'BINANCE:SOLUSDT': 'solusdt',
-  'BINANCE:XRPUSDT': 'xrpusdt',
-  'BINANCE:DOGEUSDT': 'dogeusdt',
-  'BINANCE:ADAUSDT': 'adausdt',
-  'BINANCE:AVAXUSDT': 'avaxusdt',
-  'BINANCE:DOTUSDT': 'dotusdt',
-  'BINANCE:MATICUSDT': 'maticusdt',
-  'BINANCE:LINKUSDT': 'linkusdt',
-  'BINANCE:UNIUSDT': 'uniusdt',
-  'BINANCE:ATOMUSDT': 'atomusdt',
-  'BINANCE:LTCUSDT': 'ltcusdt',
-  'BINANCE:ARBUSDT': 'arbusdt',
-  'BINANCE:OPUSDT': 'opusdt',
-  'BINANCE:APTUSDT': 'aptusdt',
-  'BINANCE:SUIUSDT': 'suiusdt',
-  'BINANCE:NEARUSDT': 'nearusdt',
-  'BINANCE:PEPEUSDT': 'pepeusdt',
-};
+interface SymbolInfo {
+  yahoo: string;
+  tradingView: string;
+  displayName: string;
+  category: string;
+  group: string;
+}
 
-const SYMBOL_GROUPS = [
-  {
-    name: 'Криптовалюты',
-    symbols: Object.keys(CRYPTO_MAP),
-  },
-  {
-    name: 'Популярные',
-    symbols: ['BINANCE:BTCUSDT', 'BINANCE:ETHUSDT', 'BINANCE:SOLUSDT', 'BINANCE:BNBUSDT', 'BINANCE:XRPUSDT'],
-  },
-];
+// ─── API ───────────────────────────────────────────────────────
+
+const API_BASE = '/api';
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ─── Helpers ───────────────────────────────────────────────────
 
 function formatPrice(price: number): string {
   if (price >= 1000) return price.toFixed(2);
@@ -70,782 +71,569 @@ function formatPrice(price: number): string {
   return price.toFixed(8);
 }
 
-function formatSymbol(symbol: string): string {
-  return symbol.replace('BINANCE:', '').replace('USDT', '/USDT');
+function formatUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}д ${h}ч ${m}м`;
+  if (h > 0) return `${h}ч ${m}м`;
+  return `${m}м`;
 }
 
+function timeAgo(timestamp: number): string {
+  const diff = Math.floor((Date.now() - timestamp) / 1000);
+  if (diff < 60) return `${diff}с назад`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}м назад`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}ч назад`;
+  return `${Math.floor(diff / 86400)}д назад`;
+}
+
+// ─── Component ─────────────────────────────────────────────────
+
 export default function App() {
-  const [alerts, setAlerts] = useState<PriceAlert[]>(() => {
-    const saved = localStorage.getItem('priceAlerts_v2');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
+  const [status, setStatus] = useState<DaemonStatus | null>(null);
+  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
-  const [newSymbol, setNewSymbol] = useState('BINANCE:BTCUSDT');
-  const [customSymbol, setCustomSymbol] = useState('');
-  const [newTargetPrice, setNewTargetPrice] = useState('');
-  const [newCondition, setNewCondition] = useState<'above' | 'below'>('above');
-  const [newRepeat, setNewRepeat] = useState(0);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [symbols, setSymbols] = useState<SymbolInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'add' | 'symbols'>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'active' | 'triggered' | 'all'>('active');
-  const [showNotification, setShowNotification] = useState<{title: string; message: string; type: string} | null>(null);
-  
-  const wsRef = useRef<WebSocket | null>(null);
-  const subscribedStreams = useRef<Set<string>>(new Set());
-  const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
 
-  // Save alerts to localStorage
-  useEffect(() => {
-    localStorage.setItem('priceAlerts_v2', JSON.stringify(alerts));
-  }, [alerts]);
+  // New alert form
+  const [newSymbol, setNewSymbol] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const [newCondition, setNewCondition] = useState<'above' | 'below'>('above');
+  const [newRepeat, setNewRepeat] = useState('0');
 
-  // Request notification permission
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      setNotificationsEnabled(true);
-    }
-  }, []);
-
-  // Get unique symbols from alerts
-  const getUniqueSymbols = useCallback(() => {
-    const symbols = new Set<string>();
-    alerts.forEach(alert => {
-      if (alert.enabled) {
-        symbols.add(alert.symbol);
-      }
-    });
-    return Array.from(symbols);
-  }, [alerts]);
-
-  // Connect to Binance WebSocket
-  const connectWebSocket = useCallback(() => {
-    const symbols = getUniqueSymbols();
-    if (symbols.length === 0) return;
-
-    const streams = symbols
-      .filter(s => CRYPTO_MAP[s])
-      .map(s => `${CRYPTO_MAP[s]}@ticker`)
-      .join('/');
-
-    if (!streams) return;
-
-    // Close existing connection
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
-    const ws = new WebSocket(`${BINANCE_WS_URL}/${streams}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('Connected to Binance WebSocket');
-      subscribedStreams.current = new Set(symbols.filter(s => CRYPTO_MAP[s]));
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.s) {
-          const binanceSymbol = data.s.toLowerCase();
-          // Find the TradingView format symbol
-          const tvSymbol = Object.keys(CRYPTO_MAP).find(
-            key => CRYPTO_MAP[key] === binanceSymbol
-          );
-          
-          if (tvSymbol) {
-            const price = parseFloat(data.c);
-            const change = parseFloat(data.p);
-            const changePercent = parseFloat(data.P);
-            const high = parseFloat(data.h);
-            const low = parseFloat(data.l);
-
-            setPrices(prev => ({
-              ...prev,
-              [tvSymbol]: {
-                symbol: tvSymbol,
-                price,
-                prevPrice: prev[tvSymbol]?.price,
-                change24h: change,
-                changePercent24h: changePercent,
-                high24h: high,
-                low24h: low,
-                lastUpdate: Date.now(),
-              },
-            }));
-          }
-        }
-      } catch (e) {
-        console.error('Parse error:', e);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket closed, reconnecting in 3 seconds...');
-      reconnectTimeout.current = setTimeout(connectWebSocket, 3000);
-    };
-  }, [getUniqueSymbols]);
-
-  // Connect/reconnect WebSocket when alerts change
-  useEffect(() => {
-    connectWebSocket();
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      if (reconnectTimeout.current) {
-        clearTimeout(reconnectTimeout.current);
-      }
-    };
-  }, [connectWebSocket]);
-
-  // Use refs for notification/sound settings to avoid stale closures
-  const notificationsEnabledRef = useRef(notificationsEnabled);
-  const soundEnabledRef = useRef(soundEnabled);
-  const alertsRef = useRef(alerts);
-  
-  useEffect(() => { notificationsEnabledRef.current = notificationsEnabled; }, [notificationsEnabled]);
-  useEffect(() => { soundEnabledRef.current = soundEnabled; }, [soundEnabled]);
-  useEffect(() => { alertsRef.current = alerts; }, [alerts]);
-
-  const playAlertSound = useCallback((frequency: number = 800) => {
+  const fetchData = useCallback(async () => {
     try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      const ctx = audioContextRef.current;
-      
-      // Play 3 beeps
-      for (let i = 0; i < 3; i++) {
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        oscillator.frequency.value = frequency;
-        oscillator.type = 'sine';
-        
-        const startTime = ctx.currentTime + i * 0.3;
-        gainNode.gain.setValueAtTime(0.3, startTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.2);
-        
-        oscillator.start(startTime);
-        oscillator.stop(startTime + 0.2);
-      }
+      const [statusData, alertsData, pricesData] = await Promise.all([
+        api<DaemonStatus>('/status'),
+        api<PriceAlert[]>('/alerts'),
+        api<Record<string, PriceData>>('/prices'),
+      ]);
+      setStatus(statusData);
+      setAlerts(alertsData);
+      setPrices(pricesData);
+      setError(null);
     } catch (e) {
-      console.error('Audio error:', e);
+      setError('Не удалось подключиться к демону. Убедитесь что он запущен: price-alert start');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const triggerAlert = useCallback((alert: PriceAlert, currentPrice: number) => {
-    const conditionText = alert.condition === 'above' ? 'выше' : 'ниже';
-    const title = `🔔 ${formatSymbol(alert.symbol)}`;
-    const message = `Цена ${conditionText} ${formatPrice(alert.targetPrice)}\nТекущая: ${formatPrice(currentPrice)}`;
-
-    // Show in-app notification
-    setShowNotification({ title, message, type: alert.condition === 'above' ? 'success' : 'warning' });
-    setTimeout(() => setShowNotification(null), 5000);
-
-    // Browser notification
-    if (notificationsEnabledRef.current) {
-      new Notification(title, {
-        body: message,
-        tag: alert.id,
-        requireInteraction: true,
-      });
+  const fetchSymbols = useCallback(async () => {
+    try {
+      const data = await api<{ catalog: SymbolInfo[] }>('/symbols');
+      setSymbols(data.catalog);
+    } catch {
+      // ignore
     }
+  }, []);
 
-    // Play sound
-    if (soundEnabledRef.current) {
-      playAlertSound(alert.condition === 'above' ? 880 : 440);
-    }
-  }, [playAlertSound]);
-
-  // Check alerts against current prices
   useEffect(() => {
-    const checkAlerts = () => {
-      const currentAlerts = alertsRef.current;
-      const triggeredIds: { alert: PriceAlert; price: number }[] = [];
-      
-      currentAlerts.forEach(alert => {
-        if (!alert.enabled) return;
-        
-        const priceData = prices[alert.symbol];
-        if (!priceData) return;
-
-        const currentPrice = priceData.price;
-        let shouldTrigger = false;
-
-        if (!alert.triggered) {
-          if (alert.condition === 'above' && currentPrice >= alert.targetPrice) {
-            shouldTrigger = true;
-          } else if (alert.condition === 'below' && currentPrice <= alert.targetPrice) {
-            shouldTrigger = true;
-          }
-        } else if (alert.repeatEvery && alert.repeatEvery > 0 && alert.triggeredAt) {
-          const timeSinceLastTrigger = (Date.now() - alert.triggeredAt) / 1000;
-          if (timeSinceLastTrigger >= alert.repeatEvery) {
-            if (alert.condition === 'above' && currentPrice >= alert.targetPrice) {
-              shouldTrigger = true;
-            } else if (alert.condition === 'below' && currentPrice <= alert.targetPrice) {
-              shouldTrigger = true;
-            }
-          }
-        }
-
-        if (shouldTrigger) {
-          triggeredIds.push({ alert, price: currentPrice });
-        }
-      });
-
-      if (triggeredIds.length > 0) {
-        // Fire notifications
-        triggeredIds.forEach(({ alert, price }) => {
-          triggerAlert(alert, price);
-        });
-        
-        // Update alerts state
-        setAlerts(prev => prev.map(a => {
-          const triggered = triggeredIds.find(t => t.alert.id === a.id);
-          if (triggered) {
-            return {
-              ...a,
-              triggered: true,
-              triggeredAt: Date.now(),
-              lastNotifiedPrice: triggered.price,
-            };
-          }
-          return a;
-        }));
-      }
-    };
-
-    const interval = setInterval(checkAlerts, 500);
+    fetchData();
+    fetchSymbols();
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [prices, triggerAlert]);
+  }, [fetchData, fetchSymbols]);
 
-  const addAlert = () => {
-    const symbol = customSymbol.trim().toUpperCase() || newSymbol;
-    if (!newTargetPrice || !symbol) return;
-
-    const newAlert: PriceAlert = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      symbol,
-      displayName: formatSymbol(symbol),
-      targetPrice: parseFloat(newTargetPrice),
-      condition: newCondition,
-      triggered: false,
-      createdAt: Date.now(),
-      enabled: true,
-      repeatEvery: newRepeat,
-    };
-
-    setAlerts(prev => [...prev, newAlert]);
-    setNewTargetPrice('');
-    setCustomSymbol('');
-    setShowAddForm(false);
-  };
-
-  const removeAlert = (id: string) => {
-    setAlerts(prev => prev.filter(a => a.id !== id));
-  };
-
-  const toggleAlert = (id: string) => {
-    setAlerts(prev => prev.map(a => 
-      a.id === id ? { ...a, enabled: !a.enabled, triggered: !a.enabled ? false : a.triggered } : a
-    ));
-  };
-
-  const resetAlert = (id: string) => {
-    setAlerts(prev => prev.map(a => 
-      a.id === id ? { ...a, triggered: false, triggeredAt: undefined, lastNotifiedPrice: undefined } : a
-    ));
-  };
-
-  const resetAllTriggered = () => {
-    setAlerts(prev => prev.map(a => 
-      a.triggered ? { ...a, triggered: false, triggeredAt: undefined, lastNotifiedPrice: undefined } : a
-    ));
-  };
-
-  const enableNotifications = async () => {
-    if ('Notification' in window) {
-      const permission = await Notification.requestPermission();
-      setNotificationsEnabled(permission === 'granted');
-      if (permission === 'granted') {
-        new Notification('✅ Уведомления включены', {
-          body: 'Вы будете получать уведомления при достижении ценовых отметок',
-        });
-      }
+  const addAlert = async () => {
+    if (!newSymbol || !newPrice) return;
+    try {
+      const symInfo = symbols.find(s => s.yahoo === newSymbol);
+      await api('/alerts', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol: newSymbol,
+          displayName: symInfo?.displayName || newSymbol,
+          targetPrice: parseFloat(newPrice),
+          condition: newCondition,
+          repeatEvery: parseInt(newRepeat) || 0,
+          category: symInfo?.category || 'forex',
+        }),
+      });
+      setNewPrice('');
+      setActiveTab('alerts');
+      fetchData();
+    } catch (e) {
+      alert('Ошибка добавления алерта');
     }
   };
 
-  // Use current price as target
-  const useCurrentPrice = () => {
-    const priceData = prices[newSymbol];
-    if (priceData) {
-      setNewTargetPrice(priceData.price.toString());
-    }
+  const removeAlert = async (id: string) => {
+    await api(`/alerts/${id}`, { method: 'DELETE' });
+    fetchData();
   };
 
-  const activeAlerts = alerts.filter(a => a.enabled && !a.triggered);
-  const triggeredAlerts = alerts.filter(a => a.triggered);
-  const disabledAlerts = alerts.filter(a => !a.enabled);
+  const toggleAlert = async (id: string, enabled: boolean) => {
+    await api(`/alerts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled, triggered: enabled ? false : undefined }),
+    });
+    fetchData();
+  };
 
-  const filteredAlerts = activeTab === 'active' ? activeAlerts : 
-                         activeTab === 'triggered' ? triggeredAlerts : alerts;
+  const resetAlert = async (id: string) => {
+    await api(`/alerts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ triggered: false, triggeredAt: undefined }),
+    });
+    fetchData();
+  };
 
-  const currentPrice = prices[newSymbol];
+  // ─── Render ────────────────────────────────────────────────
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-gray-900 to-slate-900 text-white">
-      {/* In-app notification */}
-      {showNotification && (
-        <div className="fixed top-4 right-4 z-50 animate-slide-in">
-          <div className={`px-6 py-4 rounded-xl shadow-2xl border backdrop-blur-md ${
-            showNotification.type === 'success' 
-              ? 'bg-green-500/20 border-green-500/40' 
-              : 'bg-yellow-500/20 border-yellow-500/40'
-          }`}>
-            <p className="font-bold text-lg">{showNotification.title}</p>
-            <p className="text-sm text-gray-300 whitespace-pre-line">{showNotification.message}</p>
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Подключение к демону...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-8 max-w-md text-center">
+          <div className="text-4xl mb-4">⚠️</div>
+          <h2 className="text-xl font-bold text-white mb-2">Демон не запущен</h2>
+          <p className="text-gray-400 mb-6">{error}</p>
+          <div className="bg-gray-900 rounded-lg p-4 text-left font-mono text-sm">
+            <p className="text-green-400"># Запустить демон:</p>
+            <p className="text-white">price-alert start</p>
+            <p className="text-green-400 mt-2"># Добавить алерт:</p>
+            <p className="text-white">price-alert add "ES=F" 5800 above</p>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
+  const filteredSymbols = symbols.filter(s =>
+    !searchQuery ||
+    s.yahoo.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    s.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    s.group.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white">
       {/* Header */}
-      <header className="bg-black/40 backdrop-blur-md border-b border-white/10 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
+      <header className="bg-gray-900/80 backdrop-blur-md border-b border-gray-800 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
+              <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                <span className="text-lg">🔔</span>
               </div>
               <div>
-                <h1 className="text-xl font-bold">Price Alert Tracker</h1>
-                <p className="text-xs text-gray-400">Неограниченные уведомления по ценовым отметкам • Real-time</p>
+                <h1 className="text-lg font-bold">Price Alert Daemon</h1>
+                <p className="text-xs text-gray-500">
+                  {status?.running ? '🟢 Running' : '🔴 Stopped'} • PID {status?.pid} • v{status?.version}
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={enableNotifications}
-                className={`px-3 py-2 text-sm rounded-lg transition-all ${
-                  notificationsEnabled
-                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                    : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
-                }`}
-              >
-                {notificationsEnabled ? '✓ Push' : '🔔 Push'}
-              </button>
-              <button
-                onClick={() => setSoundEnabled(!soundEnabled)}
-                className={`px-3 py-2 text-sm rounded-lg transition-all ${
-                  soundEnabled
-                    ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                    : 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
-                }`}
-              >
-                {soundEnabled ? '🔊' : '🔇'}
-              </button>
+            <div className="text-sm text-gray-500">
+              Uptime: {status ? formatUptime(status.uptime) : '—'}
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <div className="bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10">
-            <p className="text-2xl font-bold text-blue-400">{alerts.length}</p>
-            <p className="text-xs text-gray-400">Всего алертов</p>
-          </div>
-          <div className="bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10">
-            <p className="text-2xl font-bold text-green-400">{activeAlerts.length}</p>
-            <p className="text-xs text-gray-400">Активных</p>
-          </div>
-          <div className="bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10">
-            <p className="text-2xl font-bold text-yellow-400">{triggeredAlerts.length}</p>
-            <p className="text-xs text-gray-400">Сработавших</p>
-          </div>
-          <div className="bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10">
-            <p className="text-2xl font-bold text-purple-400">{Object.keys(prices).length}</p>
-            <p className="text-xs text-gray-400">Отслеживаемых</p>
+      {/* Navigation */}
+      <nav className="bg-gray-900/50 border-b border-gray-800">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-1">
+            {[
+              { id: 'dashboard', label: '📊 Дашборд' },
+              { id: 'alerts', label: '🔔 Алерты' },
+              { id: 'add', label: '➕ Добавить' },
+              { id: 'symbols', label: '📋 Символы' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
+      </nav>
 
-        {/* Add Alert Button */}
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="w-full mb-6 px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold hover:shadow-lg hover:shadow-blue-500/30 transition-all active:scale-[0.98]"
-        >
-          {showAddForm ? '✕ Закрыть' : '+ Добавить ценовой алерт'}
-        </button>
-
-        {/* Add Alert Form */}
-        {showAddForm && (
-          <div className="bg-white/5 backdrop-blur-md rounded-xl p-6 border border-white/10 mb-6 animate-fade-in">
-            <h3 className="text-lg font-semibold mb-4">Новый ценовой алерт</h3>
-            
-            {/* Symbol Selection */}
-            <div className="mb-4">
-              <label className="block text-sm text-gray-400 mb-2">Инструмент</label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <select
-                  value={newSymbol}
-                  onChange={(e) => { setNewSymbol(e.target.value); setCustomSymbol(''); }}
-                  className="px-4 py-2.5 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
-                >
-                  {SYMBOL_GROUPS.map(group => (
-                    <optgroup key={group.name} label={group.name}>
-                      {group.symbols.map(symbol => (
-                        <option key={symbol} value={symbol} className="bg-gray-800">
-                          {formatSymbol(symbol)}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={customSymbol}
-                  onChange={(e) => { setCustomSymbol(e.target.value); if (e.target.value) setNewSymbol(e.target.value.toUpperCase()); }}
-                  placeholder="Или введите: BINANCE:DOGEUSDT"
-                  className="px-4 py-2.5 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
-                />
-              </div>
-              {currentPrice && (
-                <p className="mt-2 text-sm text-gray-400">
-                  Текущая цена: <span className="text-white font-semibold">${formatPrice(currentPrice.price)}</span>
-                  <button onClick={useCurrentPrice} className="ml-2 text-blue-400 hover:text-blue-300 text-xs underline">
-                    использовать
-                  </button>
-                </p>
-              )}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* ─── Dashboard ─────────────────────────────────────── */}
+        {activeTab === 'dashboard' && status && (
+          <div className="space-y-6">
+            {/* Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <StatCard label="Всего алертов" value={status.alertsCount} color="blue" />
+              <StatCard label="Активных" value={status.activeAlerts} color="green" />
+              <StatCard label="Сработавших" value={status.triggeredAlerts} color="yellow" />
+              <StatCard label="Символов" value={status.symbolsTracked} color="purple" />
+              <StatCard label="Последний poll" value={status.lastPoll ? timeAgo(status.lastPoll) : '—'} color="gray" />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            {/* Active prices */}
+            <div>
+              <h2 className="text-lg font-semibold mb-3">📈 Текущие цены</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {Object.values(prices)
+                  .filter(p => alerts.some(a => a.symbol === p.symbol))
+                  .sort((a, b) => a.symbol.localeCompare(b.symbol))
+                  .map(p => (
+                    <div key={p.symbol} className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-semibold text-sm">{getSymbolDisplayName(p.symbol, symbols)}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          p.marketState === 'REGULAR' ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
+                        }`}>
+                          {p.marketState === 'REGULAR' ? '● Live' : '○ Closed'}
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold">${formatPrice(p.price)}</p>
+                      <p className={`text-sm ${p.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {p.changePercent >= 0 ? '▲' : '▼'} {p.changePercent >= 0 ? '+' : ''}{p.changePercent.toFixed(2)}%
+                      </p>
+                      {/* Show related alerts */}
+                      {alerts.filter(a => a.symbol === p.symbol && a.enabled).map(a => (
+                        <div key={a.id} className={`mt-2 text-xs px-2 py-1 rounded ${
+                          a.triggered ? 'bg-yellow-500/10 text-yellow-400' : 'bg-gray-800 text-gray-400'
+                        }`}>
+                          {a.condition === 'above' ? '↑' : '↓'} {formatPrice(a.targetPrice)}
+                          {a.triggered && ' ✓ HIT'}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+              </div>
+              {Object.keys(prices).length === 0 && (
+                <p className="text-gray-500 text-center py-8">Нет данных. Добавьте алерты для отслеживания.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ─── Alerts ────────────────────────────────────────── */}
+        {activeTab === 'alerts' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">🔔 Ценовые алерты ({alerts.length})</h2>
+              <button
+                onClick={() => setActiveTab('add')}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
+              >
+                + Новый алерт
+              </button>
+            </div>
+
+            {alerts.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-4xl mb-4">🔕</p>
+                <p>Нет алертов. Добавьте первый!</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {alerts.map(alert => {
+                  const price = prices[alert.symbol];
+                  return (
+                    <div
+                      key={alert.id}
+                      className={`bg-gray-900 rounded-xl p-4 border transition-all ${
+                        alert.triggered
+                          ? 'border-yellow-500/40 bg-yellow-500/5'
+                          : alert.enabled
+                          ? 'border-gray-800 hover:border-gray-700'
+                          : 'border-gray-800/50 opacity-60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold">{alert.displayName}</span>
+                            <span className="text-xs text-gray-500 font-mono">{alert.symbol}</span>
+                            {alert.triggered && (
+                              <span className="text-xs px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded-full">
+                                ✓ Сработал
+                              </span>
+                            )}
+                            {!alert.enabled && (
+                              <span className="text-xs px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full">
+                                ⏸ Отключен
+                              </span>
+                            )}
+                            {alert.repeatEvery > 0 && (
+                              <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full">
+                                ↻ {alert.repeatEvery}с
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-sm">
+                            <span className={alert.condition === 'above' ? 'text-green-400' : 'text-red-400'}>
+                              {alert.condition === 'above' ? '↑ Выше' : '↓ Ниже'} {formatPrice(alert.targetPrice)}
+                            </span>
+                            {price && !alert.triggered && (
+                              <span className="text-gray-500 text-xs">
+                                (сейчас: ${formatPrice(price.price)},{' '}
+                                {Math.abs(((price.price - alert.targetPrice) / price.price) * 100).toFixed(1)}% до цели)
+                              </span>
+                            )}
+                          </div>
+                          {alert.triggeredAt && (
+                            <p className="text-xs text-gray-600 mt-1">
+                              Сработал: {new Date(alert.triggeredAt).toLocaleString('ru-RU')}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {price && (
+                            <div className="text-right mr-2">
+                              <p className="font-bold text-lg">${formatPrice(price.price)}</p>
+                              <p className={`text-xs ${price.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {price.changePercent >= 0 ? '+' : ''}{price.changePercent.toFixed(2)}%
+                              </p>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => toggleAlert(alert.id, !alert.enabled)}
+                            className={`p-2 rounded-lg transition-colors ${
+                              alert.enabled ? 'text-green-400 hover:bg-green-500/20' : 'text-gray-500 hover:bg-gray-800'
+                            }`}
+                            title={alert.enabled ? 'Отключить' : 'Включить'}
+                          >
+                            {alert.enabled ? '👁' : '👁‍🗨'}
+                          </button>
+                          {alert.triggered && (
+                            <button
+                              onClick={() => resetAlert(alert.id)}
+                              className="p-2 rounded-lg text-blue-400 hover:bg-blue-500/20 transition-colors"
+                              title="Сбросить"
+                            >
+                              ↺
+                            </button>
+                          )}
+                          <button
+                            onClick={() => removeAlert(alert.id)}
+                            className="p-2 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
+                            title="Удалить"
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── Add Alert ─────────────────────────────────────── */}
+        {activeTab === 'add' && (
+          <div className="max-w-2xl mx-auto">
+            <h2 className="text-lg font-semibold mb-4">➕ Новый ценовой алерт</h2>
+            
+            <div className="bg-gray-900 rounded-xl p-6 border border-gray-800 space-y-4">
+              {/* Symbol search */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Символ</label>
+                <input
+                  type="text"
+                  placeholder="Поиск: gold, oil, ES, EUR..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-2"
+                />
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-800">
+                  {filteredSymbols.slice(0, 20).map(s => (
+                    <button
+                      key={s.yahoo}
+                      onClick={() => { setNewSymbol(s.yahoo); setSearchQuery(''); }}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors flex items-center justify-between ${
+                        newSymbol === s.yahoo ? 'bg-blue-500/20 text-blue-400' : 'text-gray-300'
+                      }`}
+                    >
+                      <span>
+                        <span className="font-medium">{s.displayName}</span>
+                        <span className="text-gray-500 ml-2">{s.yahoo}</span>
+                      </span>
+                      <span className="text-xs text-gray-500">{s.group}</span>
+                    </button>
+                  ))}
+                </div>
+                {newSymbol && (
+                  <p className="mt-2 text-sm text-blue-400">
+                    Выбрано: <strong>{symbols.find(s => s.yahoo === newSymbol)?.displayName || newSymbol}</strong> ({newSymbol})
+                  </p>
+                )}
+              </div>
+
+              {/* Target price */}
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Целевая цена</label>
                 <input
                   type="number"
                   step="any"
-                  value={newTargetPrice}
-                  onChange={(e) => setNewTargetPrice(e.target.value)}
-                  placeholder="Например: 50000"
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+                  value={newPrice}
+                  onChange={(e) => setNewPrice(e.target.value)}
+                  placeholder="Например: 5800"
+                  className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                 />
+                {prices[newSymbol] && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Текущая цена: ${formatPrice(prices[newSymbol].price)}
+                    <button
+                      onClick={() => setNewPrice(prices[newSymbol].price.toString())}
+                      className="ml-2 text-blue-400 hover:underline"
+                    >
+                      использовать
+                    </button>
+                  </p>
+                )}
               </div>
+
+              {/* Condition */}
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Условие</label>
-                <div className="flex gap-2">
+                <div className="flex gap-3">
                   <button
                     onClick={() => setNewCondition('above')}
-                    className={`flex-1 px-4 py-2.5 rounded-lg transition-all ${
+                    className={`flex-1 py-3 rounded-lg font-medium transition-all ${
                       newCondition === 'above'
-                        ? 'bg-green-500/20 text-green-400 border border-green-500/40'
-                        : 'bg-white/5 text-gray-400 border border-white/20 hover:bg-white/10'
+                        ? 'bg-green-500/20 text-green-400 border-2 border-green-500/50'
+                        : 'bg-gray-800 text-gray-400 border-2 border-gray-700 hover:border-gray-600'
                     }`}
                   >
-                    ↑ Выше
+                    ↑ Цена ВЫШЕ
                   </button>
                   <button
                     onClick={() => setNewCondition('below')}
-                    className={`flex-1 px-4 py-2.5 rounded-lg transition-all ${
+                    className={`flex-1 py-3 rounded-lg font-medium transition-all ${
                       newCondition === 'below'
-                        ? 'bg-red-500/20 text-red-400 border border-red-500/40'
-                        : 'bg-white/5 text-gray-400 border border-white/20 hover:bg-white/10'
+                        ? 'bg-red-500/20 text-red-400 border-2 border-red-500/50'
+                        : 'bg-gray-800 text-gray-400 border-2 border-gray-700 hover:border-gray-600'
                     }`}
                   >
-                    ↓ Ниже
+                    ↓ Цена НИЖЕ
                   </button>
                 </div>
               </div>
+
+              {/* Repeat */}
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Повтор (сек, 0 = один раз)</label>
+                <label className="block text-sm text-gray-400 mb-2">Повтор уведомления (сек, 0 = один раз)</label>
                 <input
                   type="number"
                   min="0"
                   value={newRepeat}
-                  onChange={(e) => setNewRepeat(parseInt(e.target.value) || 0)}
-                  placeholder="0"
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+                  onChange={(e) => setNewRepeat(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                 />
               </div>
-            </div>
 
-            <div className="flex gap-3">
+              {/* Submit */}
               <button
                 onClick={addAlert}
-                disabled={!newTargetPrice}
-                className="px-6 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                disabled={!newSymbol || !newPrice}
+                className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 ✓ Создать алерт
               </button>
-              <button
-                onClick={() => { setShowAddForm(false); setNewTargetPrice(''); setCustomSymbol(''); }}
-                className="px-6 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-colors"
-              >
-                Отмена
-              </button>
             </div>
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex gap-1 mb-4 bg-white/5 rounded-lg p-1 w-fit">
-          <button
-            onClick={() => setActiveTab('active')}
-            className={`px-4 py-2 text-sm rounded-md transition-all ${
-              activeTab === 'active' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Активные ({activeAlerts.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('triggered')}
-            className={`px-4 py-2 text-sm rounded-md transition-all ${
-              activeTab === 'triggered' ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Сработавшие ({triggeredAlerts.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('all')}
-            className={`px-4 py-2 text-sm rounded-md transition-all ${
-              activeTab === 'all' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Все ({alerts.length})
-          </button>
-        </div>
+        {/* ─── Symbols ───────────────────────────────────────── */}
+        {activeTab === 'symbols' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">📋 Доступные символы ({symbols.length})</h2>
+              <input
+                type="text"
+                placeholder="Поиск..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-sm w-64"
+              />
+            </div>
 
-        {/* Search */}
-        <div className="relative mb-4">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Поиск по символам..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
-          />
-        </div>
-
-        {/* Triggered alerts batch action */}
-        {activeTab === 'triggered' && triggeredAlerts.length > 0 && (
-          <button
-            onClick={resetAllTriggered}
-            className="mb-4 px-4 py-2 text-sm bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/20 transition-colors"
-          >
-            ↺ Сбросить все сработавшие
-          </button>
-        )}
-
-        {/* Alerts List */}
-        <div className="space-y-3">
-          {filteredAlerts
-            .filter(a => !searchQuery || a.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
-            .map(alert => {
-              const priceData = prices[alert.symbol];
-              const currentPrice = priceData?.price;
-              const distance = currentPrice ? Math.abs(currentPrice - alert.targetPrice) / currentPrice * 100 : null;
-              
-              return (
-                <div
-                  key={alert.id}
-                  className={`bg-white/5 backdrop-blur-md rounded-xl p-4 border transition-all hover:bg-white/[0.07] ${
-                    alert.triggered
-                      ? 'border-yellow-500/30 bg-yellow-500/5'
-                      : !alert.enabled
-                      ? 'border-gray-500/20 opacity-60'
-                      : 'border-white/10'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold text-white truncate">{formatSymbol(alert.symbol)}</h3>
-                        {alert.triggered && (
-                          <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-400 rounded-full border border-yellow-500/30">
-                            ✓ Сработал
-                          </span>
-                        )}
-                        {!alert.enabled && (
-                          <span className="px-2 py-0.5 text-xs bg-gray-500/20 text-gray-400 rounded-full border border-gray-500/30">
-                            Отключен
-                          </span>
-                        )}
-                        {alert.repeatEvery && alert.repeatEvery > 0 && (
-                          <span className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30">
-                            ↻ {alert.repeatEvery}с
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 text-sm">
-                        <span className={`${alert.condition === 'above' ? 'text-green-400' : 'text-red-400'}`}>
-                          {alert.condition === 'above' ? '↑ Выше' : '↓ Ниже'} {formatPrice(alert.targetPrice)}
-                        </span>
-                        {distance !== null && !alert.triggered && (
-                          <span className="text-gray-500 text-xs">
-                            ({distance.toFixed(2)}% от текущей)
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Current Price */}
-                    <div className="text-right mr-4">
-                      {currentPrice ? (
-                        <>
-                          <p className={`text-lg font-bold ${
-                            priceData?.prevPrice && currentPrice > priceData.prevPrice ? 'text-green-400' :
-                            priceData?.prevPrice && currentPrice < priceData.prevPrice ? 'text-red-400' : 'text-white'
-                          }`}>
-                            ${formatPrice(currentPrice)}
-                          </p>
-                          <p className={`text-xs ${priceData?.changePercent24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {priceData?.changePercent24h >= 0 ? '+' : ''}{priceData?.changePercent24h.toFixed(2)}%
-                          </p>
-                        </>
-                      ) : (
-                        <p className="text-gray-500 text-sm">Ожидание данных...</p>
-                      )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => toggleAlert(alert.id)}
-                        className={`p-2 rounded-lg transition-colors ${
-                          alert.enabled ? 'hover:bg-green-500/20 text-green-400' : 'hover:bg-gray-500/20 text-gray-400'
-                        }`}
-                        title={alert.enabled ? 'Отключить' : 'Включить'}
-                      >
-                        {alert.enabled ? (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                          </svg>
-                        ) : (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                          </svg>
-                        )}
-                      </button>
-                      {alert.triggered && (
-                        <button
-                          onClick={() => resetAlert(alert.id)}
-                          className="p-2 rounded-lg hover:bg-blue-500/20 text-blue-400 transition-colors"
-                          title="Сбросить"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => removeAlert(alert.id)}
-                        className="p-2 rounded-lg hover:bg-red-500/20 text-red-400 transition-colors"
-                        title="Удалить"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
+            <div className="space-y-6">
+              {Object.entries(
+                filteredSymbols.reduce((acc, s) => {
+                  if (!acc[s.group]) acc[s.group] = [];
+                  acc[s.group].push(s);
+                  return acc;
+                }, {} as Record<string, SymbolInfo[]>)
+              ).map(([group, syms]) => (
+                <div key={group}>
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">{group}</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {syms.map(s => {
+                      const price = prices[s.yahoo];
+                      return (
+                        <div key={s.yahoo} className="bg-gray-900 rounded-lg p-3 border border-gray-800 flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-sm">{s.displayName}</p>
+                            <p className="text-xs text-gray-500 font-mono">{s.yahoo}</p>
+                          </div>
+                          <div className="text-right">
+                            {price ? (
+                              <>
+                                <p className="font-bold text-sm">${formatPrice(price.price)}</p>
+                                <p className={`text-xs ${price.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {price.changePercent >= 0 ? '+' : ''}{price.changePercent.toFixed(2)}%
+                                </p>
+                              </>
+                            ) : (
+                              <p className="text-xs text-gray-600">—</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-
-                  {/* Progress bar showing distance to target */}
-                  {currentPrice && !alert.triggered && alert.enabled && (
-                    <div className="mt-3">
-                      <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            alert.condition === 'above' ? 'bg-green-500' : 'bg-red-500'
-                          }`}
-                          style={{
-                            width: `${Math.min(100, Math.max(0, 
-                              alert.condition === 'above'
-                                ? (1 - distance! / 100) * 100
-                                : (1 - distance! / 100) * 100
-                            ))}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Triggered info */}
-                  {alert.triggered && alert.triggeredAt && (
-                    <div className="mt-2 text-xs text-gray-500">
-                      Сработал: {new Date(alert.triggeredAt).toLocaleString('ru-RU')}
-                      {alert.lastNotifiedPrice && ` @ $${formatPrice(alert.lastNotifiedPrice)}`}
-                    </div>
-                  )}
                 </div>
-              );
-            })}
-        </div>
-
-        {/* Empty State */}
-        {filteredAlerts.length === 0 && (
-          <div className="text-center py-16">
-            <div className="w-20 h-20 mx-auto mb-4 bg-white/5 rounded-full flex items-center justify-center">
-              <svg className="w-10 h-10 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
+              ))}
             </div>
-            <p className="text-gray-400 text-lg mb-2">
-              {activeTab === 'active' ? 'Нет активных алертов' : 
-               activeTab === 'triggered' ? 'Нет сработавших алертов' : 'Нет алертов'}
-            </p>
-            <p className="text-gray-500 text-sm">
-              Нажмите "Добавить ценовой алерт" чтобы начать отслеживание
-            </p>
           </div>
         )}
-
-        {/* Info Section */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-            <h4 className="font-semibold text-sm text-blue-400 mb-2">📡 Real-time данные</h4>
-            <p className="text-xs text-gray-400">Цены обновляются в реальном времени через Binance WebSocket API</p>
-          </div>
-          <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-            <h4 className="font-semibold text-sm text-purple-400 mb-2">🔔 Уведомления</h4>
-            <p className="text-xs text-gray-400">Push-уведомления браузера + звуковые сигналы + внутриприложные уведомления</p>
-          </div>
-          <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-            <h4 className="font-semibold text-sm text-green-400 mb-2">∞ Без ограничений</h4>
-            <p className="text-xs text-gray-400">Неограниченное количество алертов с возможностью повторных уведомлений</p>
-          </div>
-        </div>
       </main>
-
-      <style>{`
-        @keyframes slide-in {
-          from { transform: translateX(100%); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-        @keyframes fade-in {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-slide-in { animation: slide-in 0.3s ease-out; }
-        .animate-fade-in { animation: fade-in 0.2s ease-out; }
-      `}</style>
     </div>
   );
+}
+
+// ─── Sub-components ────────────────────────────────────────────
+
+function StatCard({ label, value, color }: { label: string; value: string | number; color: string }) {
+  const colors: Record<string, string> = {
+    blue: 'text-blue-400',
+    green: 'text-green-400',
+    yellow: 'text-yellow-400',
+    purple: 'text-purple-400',
+    gray: 'text-gray-400',
+  };
+  return (
+    <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+      <p className={`text-2xl font-bold ${colors[color] || 'text-white'}`}>{value}</p>
+      <p className="text-xs text-gray-500 mt-1">{label}</p>
+    </div>
+  );
+}
+
+function getSymbolDisplayName(symbol: string, catalog: SymbolInfo[]): string {
+  const info = catalog.find(s => s.yahoo === symbol);
+  return info?.displayName || symbol;
 }
