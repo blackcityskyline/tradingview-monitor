@@ -8,6 +8,7 @@ export const SYMBOL_CATALOG: SymbolInfo[] = [
   // ─── FOREX MAJORS ───────────────────────────────────────────
   { yahoo: 'FX:EURUSD', tradingView: 'FX:EURUSD', displayName: 'EUR/USD', category: 'forex', group: 'FOREX Majors' },
   { yahoo: 'FX:GBPUSD', tradingView: 'FX:GBPUSD', displayName: 'GBP/USD', category: 'forex', group: 'FOREX Majors' },
+  { yahoo: 'FXCM:GBPUSD', tradingView: 'FXCM:GBPUSD', displayName: 'GBP/USD (FXCM)', category: 'forex', group: 'FOREX Majors' },
   { yahoo: 'FX:USDJPY', tradingView: 'FX:USDJPY', displayName: 'USD/JPY', category: 'forex', group: 'FOREX Majors' },
   { yahoo: 'FX:USDCHF', tradingView: 'FX:USDCHF', displayName: 'USD/CHF', category: 'forex', group: 'FOREX Majors' },
   { yahoo: 'FX:AUDUSD', tradingView: 'FX:AUDUSD', displayName: 'AUD/USD', category: 'forex', group: 'FOREX Majors' },
