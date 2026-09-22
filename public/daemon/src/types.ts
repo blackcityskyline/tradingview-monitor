@@ -3,7 +3,7 @@ export interface PriceAlert {
   symbol: string;
   displayName: string;
   targetPrice: number;
-  condition: 'above' | 'below';
+  condition: 'above' | 'below' | 'cross';
   enabled: boolean;
   triggered: boolean;
   repeatEvery: number;

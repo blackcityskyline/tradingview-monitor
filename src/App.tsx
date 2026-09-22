@@ -7,7 +7,7 @@ interface PriceAlert {
   symbol: string;
   displayName: string;
   targetPrice: number;
-  condition: 'above' | 'below';
+  condition: 'above' | 'below' | 'cross';
   enabled: boolean;
   triggered: boolean;
   repeatEvery: number;
@@ -103,7 +103,7 @@ export default function App() {
   // New alert form
   const [newSymbol, setNewSymbol] = useState('');
   const [newPrice, setNewPrice] = useState('');
-  const [newCondition, setNewCondition] = useState<'above' | 'below'>('above');
+  const [newCondition, setNewCondition] = useState<'above' | 'below' | 'cross'>('above');
   const [newRepeat, setNewRepeat] = useState('0');
 
   const fetchData = useCallback(async () => {
@@ -311,7 +311,7 @@ export default function App() {
                         <div key={a.id} className={`mt-2 text-xs px-2 py-1 rounded ${
                           a.triggered ? 'bg-yellow-500/10 text-yellow-400' : 'bg-gray-800 text-gray-400'
                         }`}>
-                          {a.condition === 'above' ? '↑' : '↓'} {formatPrice(a.targetPrice)}
+                          {a.condition === 'above' ? '↑' : a.condition === 'below' ? '↓' : '↔'} {formatPrice(a.targetPrice)}
                           {a.triggered && ' ✓ HIT'}
                         </div>
                       ))}
@@ -380,8 +380,8 @@ export default function App() {
                             )}
                           </div>
                           <div className="flex items-center gap-3 mt-1 text-sm">
-                            <span className={alert.condition === 'above' ? 'text-green-400' : 'text-red-400'}>
-                              {alert.condition === 'above' ? '↑ Выше' : '↓ Ниже'} {formatPrice(alert.targetPrice)}
+                            <span className={alert.condition === 'above' ? 'text-green-400' : alert.condition === 'below' ? 'text-red-400' : 'text-blue-400'}>
+                              {alert.condition === 'above' ? '↑ Выше' : alert.condition === 'below' ? '↓ Ниже' : '↔ Пересечение'} {formatPrice(alert.targetPrice)}
                             </span>
                             {price && !alert.triggered && (
                               <span className="text-gray-500 text-xs">
@@ -508,7 +508,7 @@ export default function App() {
               {/* Condition */}
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Условие</label>
-                <div className="flex gap-3">
+                <div className="flex gap-2">
                   <button
                     onClick={() => setNewCondition('above')}
                     className={`flex-1 py-3 rounded-lg font-medium transition-all ${
@@ -517,7 +517,7 @@ export default function App() {
                         : 'bg-gray-800 text-gray-400 border-2 border-gray-700 hover:border-gray-600'
                     }`}
                   >
-                    ↑ Цена ВЫШЕ
+                    ↑ ВЫШЕ
                   </button>
                   <button
                     onClick={() => setNewCondition('below')}
@@ -527,7 +527,17 @@ export default function App() {
                         : 'bg-gray-800 text-gray-400 border-2 border-gray-700 hover:border-gray-600'
                     }`}
                   >
-                    ↓ Цена НИЖЕ
+                    ↓ НИЖЕ
+                  </button>
+                  <button
+                    onClick={() => setNewCondition('cross')}
+                    className={`flex-1 py-3 rounded-lg font-medium transition-all ${
+                      newCondition === 'cross'
+                        ? 'bg-blue-500/20 text-blue-400 border-2 border-blue-500/50'
+                        : 'bg-gray-800 text-gray-400 border-2 border-gray-700 hover:border-gray-600'
+                    }`}
+                  >
+                    ↔ CROSS
                   </button>
                 </div>
               </div>

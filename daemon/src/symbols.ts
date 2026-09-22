@@ -6,14 +6,33 @@ import { SymbolInfo, SymbolCategory } from './types';
  */
 export const SYMBOL_CATALOG: SymbolInfo[] = [
   // ─── FOREX MAJORS ───────────────────────────────────────────
-  { yahoo: 'FX:EURUSD', tradingView: 'FX:EURUSD', displayName: 'EUR/USD', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FX:GBPUSD', tradingView: 'FX:GBPUSD', displayName: 'GBP/USD', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FXCM:GBPUSD', tradingView: 'FXCM:GBPUSD', displayName: 'GBP/USD (FXCM)', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FX:USDJPY', tradingView: 'FX:USDJPY', displayName: 'USD/JPY', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FX:USDCHF', tradingView: 'FX:USDCHF', displayName: 'USD/CHF', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FX:AUDUSD', tradingView: 'FX:AUDUSD', displayName: 'AUD/USD', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FX:USDCAD', tradingView: 'FX:USDCAD', displayName: 'USD/CAD', category: 'forex', group: 'FOREX Majors' },
-  { yahoo: 'FX:NZDUSD', tradingView: 'FX:NZDUSD', displayName: 'NZD/USD', category: 'forex', group: 'FOREX Majors' },
+  // Межбанк (FX:)
+  { yahoo: 'FX:EURUSD', tradingView: 'FX:EURUSD', displayName: 'EUR/USD (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  { yahoo: 'FX:GBPUSD', tradingView: 'FX:GBPUSD', displayName: 'GBP/USD (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  { yahoo: 'FX:USDJPY', tradingView: 'FX:USDJPY', displayName: 'USD/JPY (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  { yahoo: 'FX:USDCHF', tradingView: 'FX:USDCHF', displayName: 'USD/CHF (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  { yahoo: 'FX:AUDUSD', tradingView: 'FX:AUDUSD', displayName: 'AUD/USD (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  { yahoo: 'FX:USDCAD', tradingView: 'FX:USDCAD', displayName: 'USD/CAD (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  { yahoo: 'FX:NZDUSD', tradingView: 'FX:NZDUSD', displayName: 'NZD/USD (Interbank)', category: 'forex', group: 'FOREX — Interbank (FX:)' },
+  // FXCM
+  { yahoo: 'FXCM:EURUSD', tradingView: 'FXCM:EURUSD', displayName: 'EUR/USD (FXCM)', category: 'forex', group: 'FOREX — FXCM Broker' },
+  { yahoo: 'FXCM:GBPUSD', tradingView: 'FXCM:GBPUSD', displayName: 'GBP/USD (FXCM)', category: 'forex', group: 'FOREX — FXCM Broker' },
+  { yahoo: 'FXCM:USDJPY', tradingView: 'FXCM:USDJPY', displayName: 'USD/JPY (FXCM)', category: 'forex', group: 'FOREX — FXCM Broker' },
+  { yahoo: 'FXCM:USDCHF', tradingView: 'FXCM:USDCHF', displayName: 'USD/CHF (FXCM)', category: 'forex', group: 'FOREX — FXCM Broker' },
+  { yahoo: 'FXCM:AUDUSD', tradingView: 'FXCM:AUDUSD', displayName: 'AUD/USD (FXCM)', category: 'forex', group: 'FOREX — FXCM Broker' },
+  { yahoo: 'FXCM:USDCAD', tradingView: 'FXCM:USDCAD', displayName: 'USD/CAD (FXCM)', category: 'forex', group: 'FOREX — FXCM Broker' },
+  // OANDA
+  { yahoo: 'OANDA:EURUSD', tradingView: 'OANDA:EURUSD', displayName: 'EUR/USD (OANDA)', category: 'forex', group: 'FOREX — OANDA Broker' },
+  { yahoo: 'OANDA:GBPUSD', tradingView: 'OANDA:GBPUSD', displayName: 'GBP/USD (OANDA)', category: 'forex', group: 'FOREX — OANDA Broker' },
+  { yahoo: 'OANDA:USDJPY', tradingView: 'OANDA:USDJPY', displayName: 'USD/JPY (OANDA)', category: 'forex', group: 'FOREX — OANDA Broker' },
+  { yahoo: 'OANDA:USDCHF', tradingView: 'OANDA:USDCHF', displayName: 'USD/CHF (OANDA)', category: 'forex', group: 'FOREX — OANDA Broker' },
+  { yahoo: 'OANDA:AUDUSD', tradingView: 'OANDA:AUDUSD', displayName: 'AUD/USD (OANDA)', category: 'forex', group: 'FOREX — OANDA Broker' },
+  { yahoo: 'OANDA:USDCAD', tradingView: 'OANDA:USDCAD', displayName: 'USD/CAD (OANDA)', category: 'forex', group: 'FOREX — OANDA Broker' },
+  // IDC (Interactive Brokers)
+  { yahoo: 'IDC:EURUSD', tradingView: 'IDC:EURUSD', displayName: 'EUR/USD (IB)', category: 'forex', group: 'FOREX — Interactive Brokers (IDC:)' },
+  { yahoo: 'IDC:GBPUSD', tradingView: 'IDC:GBPUSD', displayName: 'GBP/USD (IB)', category: 'forex', group: 'FOREX — Interactive Brokers (IDC:)' },
+  { yahoo: 'IDC:USDJPY', tradingView: 'IDC:USDJPY', displayName: 'USD/JPY (IB)', category: 'forex', group: 'FOREX — Interactive Brokers (IDC:)' },
+  { yahoo: 'IDC:USDCHF', tradingView: 'IDC:USDCHF', displayName: 'USD/CHF (IB)', category: 'forex', group: 'FOREX — Interactive Brokers (IDC:)' },
 
   // ─── FUTURES: INDICES ───────────────────────────────────────
   { yahoo: 'CME_MINI:ES1!', tradingView: 'CME_MINI:ES1!', displayName: 'S&P 500 E-mini (ES)', category: 'futures_indices', group: 'Futures — Indices' },

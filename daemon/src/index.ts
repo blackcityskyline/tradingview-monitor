@@ -221,25 +221,31 @@ function showLogs(lines: number): void {
 
 async function addAlert(): Promise<void> {
   // Interactive: parse from args or prompt
-  // Usage: price-alert add <symbol> <price> [above|below] [repeat_seconds]
+  // Usage: price-alert add <symbol> <price> [above|below|cross] [repeat_seconds]
   
   const symbol = args[1];
   const price = args[2];
-  const condition = (args[3] as 'above' | 'below') || 'above';
+  const condition = (args[3] as 'above' | 'below' | 'cross') || 'above';
   const repeat = parseInt(args[4]) || 0;
 
   if (!symbol || !price) {
-    console.log('Usage: price-alert add <symbol> <target_price> [above|below] [repeat_seconds]');
+    console.log('Usage: price-alert add <symbol> <target_price> [above|below|cross] [repeat_seconds]');
+    console.log('');
+    console.log('Conditions:');
+    console.log('  above  — срабатывает когда цена ВЫШЕ target');
+    console.log('  below  — срабатывает когда цена НИЖЕ target');
+    console.log('  cross  — срабатывает при ПЕРЕСЕЧЕНИИ target с любой стороны');
     console.log('');
     console.log('Examples:');
     console.log('  price-alert add "CME_MINI:ES1!" 5800 above');
     console.log('  price-alert add "COMEX:GC1!" 2400 below');
-    console.log('  price-alert add "FX:EURUSD" 1.10 above 300');
+    console.log('  price-alert add "FX:EURUSD" 1.10 cross 300');
+    console.log('  price-alert add "FXCM:GBPUSD" 1.27 cross');
     console.log('  price-alert add "NYMEX:CL1!" 75 below 60');
     console.log('');
     console.log('Available symbols:');
     console.log('  price-alert symbols          — list all');
-    console.log('  price-alert symbols gold     — search');
+    console.log('  price-alert symbols forex    — search forex');
     return;
   }
 
@@ -266,7 +272,8 @@ async function addAlert(): Promise<void> {
   console.log(`✅ Alert added:`);
   console.log(`   ID: ${alert.id}`);
   console.log(`   Symbol: ${displayName} (${symbol})`);
-  console.log(`   Condition: ${condition === 'above' ? '⬆ Above' : '⬇ Below'} ${price}`);
+  const condText = condition === 'above' ? '⬆ Above' : condition === 'below' ? '⬇ Below' : '↔ Cross';
+  console.log(`   Condition: ${condText} ${price}`);
   if (repeat > 0) {
     console.log(`   Repeat: every ${repeat}s`);
   }
@@ -292,7 +299,7 @@ function listAlerts(): void {
     const id = alert.id.substring(0, 4);
     const name = alert.displayName.substring(0, 20).padEnd(20);
     const target = String(alert.targetPrice).padEnd(9);
-    const cond = (alert.condition === 'above' ? '⬆ above' : '⬇ below').padEnd(7);
+    const cond = (alert.condition === 'above' ? '⬆ above' : alert.condition === 'below' ? '⬇ below' : '↔ cross').padEnd(7);
     let status: string;
     if (alert.triggered) status = '🔔 HIT ';
     else if (!alert.enabled) status = '⏸ OFF ';
@@ -457,8 +464,11 @@ DAEMON CONTROL:
   logs [lines]       Show recent logs (default: 50)
 
 ALERT MANAGEMENT:
-  add <sym> <price> [above|below] [repeat_sec]
+  add <sym> <price> [above|below|cross] [repeat_sec]
                      Add a price alert
+                     above  — price goes ABOVE target
+                     below  — price goes BELOW target
+                     cross  — price CROSSES target (either direction)
   list               List all alerts
   remove <id>        Remove an alert
   enable <id>        Enable an alert
@@ -476,10 +486,11 @@ EXAMPLES:
   price-alert start
   price-alert add "CME_MINI:ES1!" 5800 above
   price-alert add "COMEX:GC1!" 2400 below 300
-  price-alert add "FX:EURUSD" 1.10 above
+  price-alert add "FX:EURUSD" 1.10 cross
+  price-alert add "FXCM:GBPUSD" 1.27 cross 60
   price-alert add "NYMEX:CL1!" 75 below 60
   price-alert list
-  price-alert symbols oil
+  price-alert symbols forex
   price-alert test
 
 SUPPORTED MARKETS:

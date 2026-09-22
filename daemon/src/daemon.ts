@@ -108,6 +108,7 @@ export class PriceAlertDaemon {
       if (!priceData) continue;
 
       const currentPrice = priceData.price;
+      const prevPrice = priceData.prevPrice;
       let shouldNotify = false;
 
       if (!alert.triggered) {
@@ -116,6 +117,13 @@ export class PriceAlertDaemon {
           shouldNotify = true;
         } else if (alert.condition === 'below' && currentPrice <= alert.targetPrice) {
           shouldNotify = true;
+        } else if (alert.condition === 'cross' && prevPrice !== undefined) {
+          // Cross: price crossed the target from either side
+          const crossedUp = prevPrice < alert.targetPrice && currentPrice >= alert.targetPrice;
+          const crossedDown = prevPrice > alert.targetPrice && currentPrice <= alert.targetPrice;
+          if (crossedUp || crossedDown) {
+            shouldNotify = true;
+          }
         }
       } else if (alert.repeatEvery > 0 && alert.triggeredAt) {
         // Repeat notification
@@ -125,6 +133,12 @@ export class PriceAlertDaemon {
             shouldNotify = true;
           } else if (alert.condition === 'below' && currentPrice <= alert.targetPrice) {
             shouldNotify = true;
+          } else if (alert.condition === 'cross' && prevPrice !== undefined) {
+            const crossedUp = prevPrice < alert.targetPrice && currentPrice >= alert.targetPrice;
+            const crossedDown = prevPrice > alert.targetPrice && currentPrice <= alert.targetPrice;
+            if (crossedUp || crossedDown) {
+              shouldNotify = true;
+            }
           }
         }
       }
@@ -136,7 +150,7 @@ export class PriceAlertDaemon {
   }
 
   private async fireAlert(alert: PriceAlert, currentPrice: number): Promise<void> {
-    const conditionText = alert.condition === 'above' ? '⬆ выше' : '⬇ ниже';
+    const conditionText = alert.condition === 'above' ? '⬆ выше' : alert.condition === 'below' ? '⬇ ниже' : '↔ пересечение';
     this.log(`🔔 ALERT: ${alert.displayName} ${conditionText} ${alert.targetPrice} (current: ${currentPrice})`);
 
     // Send system notification
