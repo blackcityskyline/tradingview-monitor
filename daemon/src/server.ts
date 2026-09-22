@@ -4,6 +4,7 @@ import * as path from 'path';
 import { ConfigManager } from './config';
 import { PriceData, DaemonStatus, PriceAlert } from './types';
 import { SYMBOL_CATALOG, getSymbolsByGroup, searchSymbols, getTradingViewUrl } from './symbols';
+import { getProviderInfo } from './provider';
 
 interface ServerDeps {
   config: ConfigManager;
@@ -159,6 +160,12 @@ function handleApiRequest(
     const yahooSymbol = decodeURIComponent(urlMatch[1]);
     const tvUrl = getTradingViewUrl(yahooSymbol);
     sendJson(res, 200, { url: tvUrl });
+    return;
+  }
+
+  // GET /api/providers — show data source status
+  if (pathname === '/api/providers' && req.method === 'GET') {
+    sendJson(res, 200, { providers: getProviderInfo() });
     return;
   }
 

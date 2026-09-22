@@ -216,6 +216,90 @@ Web UI позволяет:
 }
 ```
 
+## Откуда берутся цены?
+
+### Источники данных
+
+Демон использует **несколько источников данных** с автоматическим fallback:
+
+#### 1. Yahoo Finance (основной)
+- **Endpoint**: `query1.finance.yahoo.com/v7/finance/quote` и `/v8/finance/chart`
+- **Авторизация**: Не требуется
+- **Стоимость**: Бесплатно
+- **Задержка**: 
+  - FOREX, крипто: ~реальное время
+  - US фьючерсы (ES, NQ, CL, GC): задержка 10-15 минут (требование биржи)
+  - Азиатские/европейские рынки: может быть задержка
+- **Лимиты**: ~2000 запросов/час (без авторизации)
+- **Покрытие**: Все символы из каталога
+
+#### 2. Twelve Data (fallback)
+- **Endpoint**: `api.twelvedata.com/price`
+- **Авторизация**: API ключ (бесплатный)
+- **Стоимость**: 800 запросов/день бесплатно
+- **Задержка**: ~реальное время
+- **Настройка**: `export TWELVE_DATA_API_KEY=your_key`
+- **Получить ключ**: https://twelvedata.com/pricing
+
+#### 3. Binance WebSocket (для крипто)
+- **Endpoint**: `wss://stream.binance.com:9443/ws`
+- **Авторизация**: Не требуется
+- **Стоимость**: Бесплатно
+- **Задержка**: Реальное время (< 1 сек)
+- **Покрытие**: Только крипто (BTC, ETH, SOL, etc.)
+
+### Важные замечания
+
+⚠️ **Задержка данных для фьючерсов**
+
+Цены фьючерсов CME/CBOT/NYMEX (ES, NQ, CL, GC, ZS, etc.) через Yahoo Finance имеют **задержку 10-15 минут** — это требование бирж. Для real-time данных фьючерсов нужна платная подписка:
+- CME Market Data: ~$10-30/месяц
+- Или через брокера (Interactive Brokers, TD Ameritrade)
+
+✅ **FOREX и крипто** — данные практически в реальном времени (задержка < 1 сек)
+
+✅ **Металлы (spot)** — XAU/USD, XAG/USD доступны с минимальной задержкой
+
+### Проверка источников
+
+```bash
+# Показать статус всех провайдеров
+curl http://localhost:3456/api/providers
+
+# Пример ответа:
+{
+  "providers": [
+    {
+      "name": "Yahoo Finance",
+      "available": true,
+      "note": "Free, no auth. May be rate-limited."
+    },
+    {
+      "name": "Twelve Data",
+      "available": false,
+      "note": "Not configured. Set TWELVE_DATA_API_KEY."
+    }
+  ]
+}
+```
+
+### Альтернативные источники (если Yahoo не работает)
+
+Если Yahoo Finance заблокирован в вашем регионе или возвращает ошибки:
+
+1. **Twelve Data** (рекомендуется)
+   ```bash
+   export TWELVE_DATA_API_KEY=your_key
+   price-alert restart
+   ```
+
+2. **Finnhub** (60 calls/min бесплатно)
+   ```bash
+   export FINNHUB_API_KEY=your_key
+   ```
+
+3. **Свой прокси** — можно настроить проксирование через VPN/VPS
+
 ## Архитектура
 
 ```
