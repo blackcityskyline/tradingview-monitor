@@ -1,12 +1,12 @@
 export interface PriceAlert {
   id: string;
-  symbol: string;           // Yahoo Finance symbol (e.g. "EURUSD=X", "ES=F")
-  displayName: string;      // Human-readable name
+  symbol: string;
+  displayName: string;
   targetPrice: number;
   condition: 'above' | 'below';
   enabled: boolean;
   triggered: boolean;
-  repeatEvery: number;      // seconds, 0 = one-time
+  repeatEvery: number;
   createdAt: number;
   triggeredAt?: number;
   lastNotifiedPrice?: number;
@@ -22,8 +22,8 @@ export type SymbolCategory =
   | 'crypto';
 
 export interface SymbolInfo {
-  yahoo: string;            // Yahoo Finance symbol
-  tradingView: string;      // TradingView symbol for URL
+  yahoo: string;
+  tradingView: string;
   displayName: string;
   category: SymbolCategory;
   group: string;
@@ -44,8 +44,8 @@ export interface PriceData {
 
 export interface DaemonConfig {
   port: number;
-  pollInterval: number;     // seconds between price checks
-  dataDir: string;          // where to store state
+  pollInterval: number;
+  dataDir: string;
   pidFile: string;
   logFile: string;
   alerts: PriceAlert[];
