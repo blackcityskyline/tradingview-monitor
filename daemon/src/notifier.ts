@@ -99,7 +99,7 @@ function gdbusNotify(title: string, body: string, url: string, urgency: string):
     const escapedUrl = escapeShell(url);
     
     // Use gdbus to call org.freedesktop.Notifications
-    const urgencyMap = { low: '1', normal: '2', critical: '3' };
+    const urgencyMap: Record<string, string> = { low: '1', normal: '2', critical: '3' };
     const cmd = `gdbus call --session ` +
       `--dest org.freedesktop.Notifications ` +
       `--object-path /org/freedesktop/Notifications ` +

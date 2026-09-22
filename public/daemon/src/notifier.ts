@@ -52,7 +52,7 @@ function notifySend(title: string, body: string, url: string, urgency: string): 
 
 function gdbusNotify(title: string, body: string, url: string, urgency: string): Promise<{success: boolean; method: string; error?: string}> {
   return new Promise((resolve) => {
-    const urgencyMap = { low: '1', normal: '2', critical: '3' };
+    const urgencyMap: Record<string, string> = { low: '1', normal: '2', critical: '3' };
     const cmd = `gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify "PriceAlert" 0 "dialog-information" "${escapeShell(title)}" "${escapeShell(body)}" ['open','📊 Открыть график'] {'urgency': <byte ${urgencyMap[urgency] || '2'}>} 0`;
     exec(cmd, { timeout: 5000 }, (error, stdout) => {
       if (error) {

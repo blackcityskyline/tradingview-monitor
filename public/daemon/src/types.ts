@@ -33,6 +33,7 @@ export interface PriceData {
   symbol: string;
   price: number;
   prevClose: number;
+  prevPrice?: number;
   change: number;
   changePercent: number;
   high: number;
