@@ -75,16 +75,27 @@ export class PriceAlertDaemon {
       const priceData = this.prices[alert.symbol];
       if (!priceData) continue;
       const currentPrice = priceData.price;
+      const prevPrice = priceData.prevPrice;
       let shouldNotify = false;
 
       if (!alert.triggered) {
         if (alert.condition === 'above' && currentPrice >= alert.targetPrice) shouldNotify = true;
         else if (alert.condition === 'below' && currentPrice <= alert.targetPrice) shouldNotify = true;
+        else if (alert.condition === 'cross' && prevPrice !== undefined) {
+          const crossedUp = prevPrice < alert.targetPrice && currentPrice >= alert.targetPrice;
+          const crossedDown = prevPrice > alert.targetPrice && currentPrice <= alert.targetPrice;
+          if (crossedUp || crossedDown) shouldNotify = true;
+        }
       } else if (alert.repeatEvery > 0 && alert.triggeredAt) {
         const elapsed = (Date.now() - alert.triggeredAt) / 1000;
         if (elapsed >= alert.repeatEvery) {
           if (alert.condition === 'above' && currentPrice >= alert.targetPrice) shouldNotify = true;
           else if (alert.condition === 'below' && currentPrice <= alert.targetPrice) shouldNotify = true;
+          else if (alert.condition === 'cross' && prevPrice !== undefined) {
+            const crossedUp = prevPrice < alert.targetPrice && currentPrice >= alert.targetPrice;
+            const crossedDown = prevPrice > alert.targetPrice && currentPrice <= alert.targetPrice;
+            if (crossedUp || crossedDown) shouldNotify = true;
+          }
         }
       }
 

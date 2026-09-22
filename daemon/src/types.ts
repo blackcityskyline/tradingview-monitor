@@ -3,7 +3,7 @@ export interface PriceAlert {
   symbol: string;           // Yahoo Finance symbol (e.g. "EURUSD=X", "ES=F")
   displayName: string;      // Human-readable name
   targetPrice: number;
-  condition: 'above' | 'below';
+  condition: 'above' | 'below' | 'cross';
   enabled: boolean;
   triggered: boolean;
   repeatEvery: number;      // seconds, 0 = one-time

@@ -25,7 +25,7 @@ export async function sendNotification(
   const displayName = symbolInfo?.displayName || alert.displayName || alert.symbol;
   const tvUrl = getTradingViewUrl(alert.symbol);
   
-  const conditionText = alert.condition === 'above' ? '⬆ Выше' : '⬇ Ниже';
+  const conditionText = alert.condition === 'above' ? '⬆ Выше' : alert.condition === 'below' ? '⬇ Ниже' : '↔ Пересечение';
   const title = `🔔 ${displayName}: ${conditionText} ${formatPrice(alert.targetPrice)}`;
   const body = `Текущая цена: ${formatPrice(currentPrice)}\n${tvUrl}`;
 
