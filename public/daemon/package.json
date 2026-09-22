@@ -1,0 +1,24 @@
+{
+  "name": "price-alert-daemon",
+  "version": "1.0.0",
+  "description": "Linux daemon for unlimited price alerts with TradingView WebSocket",
+  "main": "dist/index.js",
+  "bin": {
+    "price-alert": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js start",
+    "stop": "node dist/index.js stop",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
